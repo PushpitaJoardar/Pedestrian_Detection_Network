@@ -1,0 +1,457 @@
+import numpy as np
+import cv2
+import os
+import csv
+import matplotlib.pyplot as plt
+import sklearn.model_selection as model_selection
+from sklearn.metrics import accuracy_score, log_loss, f1_score, precision_score, recall_score, confusion_matrix, classification_report
+from tqdm import tqdm
+# from VggModel import Model
+# import Model
+# from new_vgg import Model
+from keras.models import Sequential
+from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, BatchNormalization
+from keras.optimizers import Adam
+from keras.utils import to_categorical
+import pandas as pd
+
+# necessary import for train_test_split
+from sklearn.model_selection import train_test_split
+
+
+
+
+# design a VGG16 model
+
+class vgg_model:
+
+    def __init__(self, input_shape, classes):
+        
+        # input_shape = (128, 128, 3)
+
+        model = Sequential(name='VGG')
+
+        # Block 1 has 3 layers: 2 Conv2D and 1 MaxPooling2D
+        # output shape after block 1: (112, 64, 64)
+        model.add(Conv2D(64, (3, 3), activation='relu', padding='same', input_shape=input_shape))
+        model.add(Conv2D(64, (3, 3), activation='relu', padding='same'))
+        model.add(MaxPooling2D((2, 2), strides=(2, 2)))
+
+        # Block 2 has 3 layers: 2 Conv2D and 1 MaxPooling2D
+        # output shape after block 2: (56, 32, 128)
+        model.add(Conv2D(128, (3, 3), activation='relu', padding='same'))
+        model.add(Conv2D(128, (3, 3), activation='relu', padding='same'))
+        model.add(MaxPooling2D((2, 2), strides=(2, 2)))
+
+        # Block 3 has 4 layers: 3 Conv2D and 1 MaxPooling2D
+        # output shape after block 3: (28, 16, 256)
+        model.add(Conv2D(256, (3, 3), activation='relu', padding='same'))
+        model.add(Conv2D(256, (3, 3), activation='relu', padding='same'))
+        model.add(Conv2D(256, (3, 3), activation='relu', padding='same'))
+        model.add(MaxPooling2D((2, 2), strides=(2, 2)))
+
+        # Block 4 has 4 layers: 3 Conv2D and 1 MaxPooling2D
+        # output shape after block 4: (14, 8, 512)
+        model.add(Conv2D(512, (3, 3), activation='relu', padding='same'))
+        model.add(Conv2D(512, (3, 3), activation='relu', padding='same'))
+        model.add(Conv2D(512, (3, 3), activation='relu', padding='same'))
+        model.add(MaxPooling2D((2, 2), strides=(2, 2)))
+
+        # Block 5 has 4 layers: 3 Conv2D and 1 MaxPooling2D
+        # output shape after block 5: (7, 4, 512)
+        model.add(Conv2D(512, (3, 3), activation='relu', padding='same'))
+        model.add(Conv2D(512, (3, 3), activation='relu', padding='same'))
+        model.add(Conv2D(512, (3, 3), activation='relu', padding='same'))
+        model.add(MaxPooling2D((2, 2), strides=(2, 2)))
+
+        # Block 6 has  layers: 3 Conv2D and 1 MaxPooling2D
+        # output shape after block 6: (3, 2, 512)
+#         model.add(Conv2D(512, (3, 3), activation='relu', padding='same'))
+#         model.add(Conv2D(512, (3, 3), activation='relu', padding='same'))
+#         model.add(Conv2D(512, (3, 3), activation='relu', padding='same'))
+#         model.add(MaxPooling2D((2, 2), strides=(2, 2)))
+
+        # FC block has 6 layers: BatchNormalization, AveragePooling2D, Flatten, Dense, Dropout, Dense
+        
+        # BatchNormalization layer; output shape: (7, 4, 512)
+        model.add(BatchNormalization())
+        # AveragePooling2D layer; output shape: (3, 2, 512)
+        # model.add(MaxPooling2D((2, 2), strides=(2, 2)))
+        # Flatten layer; output shape: (3*2*512)
+        model.add(Flatten())
+        # Dense layer; output shape: (1024)
+        model.add(Dense(1024, activation='relu'))
+        # Dropout layer; output shape: (1024)
+        model.add(Dropout(0.5))
+        # Dense layer; output shape: (classes)
+        model.add(Dense(classes, activation='softmax'))
+        
+
+        # compile the model
+        model.compile(loss='categorical_crossentropy', optimizer=Adam(lr=0.0001), metrics=['accuracy'])
+
+        self.model = model
+
+    def summary(self):
+        self.model.summary()
+
+    def fit(self, x_train, y_train, x_val, y_val, batch_size, epochs):
+        return self.model.fit(x_train, y_train, batch_size=batch_size, epochs=epochs, validation_data=(x_val, y_val))
+
+    def evaluate(self, x_test, y_test):
+        return self.model.evaluate(x_test, y_test)
+
+    def predict(self, x_test):
+        return self.model.predict(x_test)
+
+
+
+number_of_images = 8900
+epochs = 50
+batch_size = 32
+input_shape=(128, 128, 3)
+classes=2
+number_of_test_images = 1890
+
+
+# write a function to load the images, the function will have 2 parameters: the path to the images and the number of images\
+# the function will return a numpy array of images
+
+def load_images(path, number_of_images):
+    images = np.zeros((number_of_images, 128, 128, 3))
+    for i in tqdm(range(number_of_images)):
+
+        # check if the image is valid, if it is not valid, skip it
+        if not os.path.isfile(path + str(i) + '.jpg'):
+            continue
+
+        img = cv2.imread(path + str(i) + '.jpg')
+        img = cv2.resize(img, (128, 128))
+        images[i] = img
+
+    return images
+
+
+
+
+# write a function to train the model
+# the function has 5 parameters: the model, the images, the labels, the batch size and the number of epochs
+# the function will write the training history to a csv file
+# the function will return the model
+
+def train(model, images, labels, batch_size, epochs):
+    # split the data into training and validation sets
+    x_train, x_val, y_train, y_val = train_test_split(images, labels, test_size=0.1, random_state=42)
+    # train the model
+    history = model.fit(x_train, y_train, x_val, y_val, batch_size, epochs)
+    # write the training history to a csv file
+    pd.DataFrame(history.history).to_csv('/kaggle/working/history.csv')
+
+    # plot the training history (training accuracy and validation accuracy)
+    # save the plot in a png file
+    plt.plot(history.history['accuracy'])
+    plt.plot(history.history['val_accuracy'])
+    plt.title('model accuracy')
+    plt.ylabel('accuracy')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'val'], loc='upper left')
+    plt.savefig('/kaggle/working/accuracy.png')
+    plt.show()
+
+    # plot the training history (training loss and validation loss)
+    # save the plot in a png file
+    plt.plot(history.history['loss'])
+    plt.plot(history.history['val_loss'])
+    plt.title('model loss')
+    plt.ylabel('loss')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'val'], loc='upper left')
+    plt.savefig('/kaggle/working/loss.png')
+    plt.show()
+    
+    return model
+
+
+train_directory = '/kaggle/input/train-data9000/Data_V2/Train'
+test_directory = '/kaggle/input/train-data9000/Data_V2/Test'
+
+
+# use the "train_labels.csv" file to load the images, the first column is the image name and the second column is the corresponding label
+# the images will have path: "train_directory + image_name"
+# the labels will be the second column of the csv file
+
+train_labels = pd.read_csv('/kaggle/input/train-data9000/Data_V2/train_labels.csv')
+
+# load the images serially from reading the csv file and save the names of the images in a list
+
+image_names = []
+
+images = np.zeros((number_of_images, 128, 128, 3))
+for i in tqdm(range(number_of_images)):
+
+    # check if the image is valid, if it is not valid, skip it
+    if not os.path.isfile(train_directory + '/' + train_labels.iloc[i, 0]):
+        continue
+
+    img = cv2.imread(train_directory + '/' + train_labels.iloc[i, 0])
+    img = cv2.resize(img, (128, 128))
+    
+    # normalize the images
+    img = img / 255.0
+
+    images[i] = img
+
+    image_names.append(train_labels.iloc[i, 0])
+
+
+
+# load the labels serially from reading the csv file
+# perform one-hot encoding on the labels, 'person' will be [0, 1] and 'non-person' will be [1, 0]
+# save the labels in a list
+
+person_noPerson_list = []
+
+labels = np.zeros((number_of_images, 2))
+for i in tqdm(range(number_of_images)):
+    if train_labels.iloc[i, 1] == 'person':
+        labels[i] = [0, 1]
+    else:
+        labels[i] = [1, 0]
+
+    person_noPerson_list.append(train_labels.iloc[i, 1])
+
+
+# print the shape of the images and labels
+print('Images: ', images.shape)
+print('Labels: ', labels.shape)
+
+# print all the labels
+# print(labels)
+
+
+# print image names and labels
+# for i in range(number_of_images):
+#     print(image_names[i], person_noPerson_list[i])
+
+# create an instance of the model
+model = vgg_model(input_shape, classes)
+
+# model.summary()
+
+# train the model and plot the training accuracy and validation accuracy
+model = train(model, images, labels, batch_size, epochs)
+
+
+
+######################### TESTING #############################
+# test the model using the test data and predict the labels
+test_labels = pd.read_csv('/kaggle/input/train-data9000/Data_V2/test_labels.csv')
+
+# load the images serially from reading the csv file and save the names of the images in a list
+
+test_image_names = []
+
+test_images = np.zeros((number_of_test_images, 128, 128, 3))
+labels = np.zeros((number_of_test_images, 2))
+count = 0
+
+for i in tqdm(range(number_of_test_images)):
+    # check if the image is valid, if it is not valid, skip it
+    if not os.path.isfile(test_directory + '/' + test_labels.iloc[i, 0]):
+        continue
+        
+    # print(test_directory + '/' + test_labels.iloc[i, 0])
+    img = cv2.imread(test_directory + '/' + test_labels.iloc[i, 0])
+
+    if img is not None:
+
+        count += 1
+
+        img = cv2.resize(img, (128, 128))
+        
+        # normalize the images
+        img = img / 255.0
+
+        test_images[i] = img
+
+        # test_image_names.append(test_labels.iloc[i, 0])
+
+        if test_labels.iloc[i, 1] == 'person':
+            labels[i] = [0, 1]
+        else:
+            labels[i] = [1, 0]
+
+        # test_person_noPerson_list.append(test_labels.iloc[i, 1])
+
+    
+
+# load the labels serially from reading the csv file
+# perform one-hot encoding on the labels, 'person' will be [0, 1] and 'non-person' will be [1, 0]
+# save the labels in a list
+
+# test_person_noPerson_list = []
+
+
+# for i in tqdm(range(number_of_test_images)):
+#     if test_labels.iloc[i, 1] == 'person':
+#         labels[i] = [0, 1]
+#     else:
+#         labels[i] = [1, 0]
+
+#     test_person_noPerson_list.append(test_labels.iloc[i, 1])
+
+# print the shape of the images and labels
+print('Images: ', test_images.shape)
+print('Labels: ', labels.shape)
+print('Count: ', count)
+
+
+# predict the labels
+predictions = model.predict(test_images)
+
+
+# perform one-hot encoding on the predictions
+
+predictions = np.argmax(predictions, axis=1)
+
+# print the predictions
+print(predictions)
+
+# perform one-hot encoding on the test labels and measure the accuracy
+labels = np.argmax(labels, axis=1)
+
+# print the test labels
+print(labels)
+
+# calculate the accuracy
+accuracy = accuracy_score(labels, predictions)
+
+# print the accuracy
+print('Accuracy: ', accuracy)
+
+# print recall, precision and f1-score
+print(classification_report(labels, predictions))
+100%|██████████| 8900/8900 [06:19<00:00, 23.46it/s] 
+100%|██████████| 8900/8900 [00:00<00:00, 18572.75it/s]
+Images:  (8900, 128, 128, 3)
+Labels:  (8900, 2)
+/opt/conda/lib/python3.7/site-packages/keras/optimizers/optimizer_v2/adam.py:117: UserWarning: The `lr` argument is deprecated, use `learning_rate` instead.
+  super().__init__(name, **kwargs)
+Epoch 1/50
+251/251 [==============================] - 31s 91ms/step - loss: 0.4400 - accuracy: 0.7943 - val_loss: 0.5694 - val_accuracy: 0.8404
+Epoch 2/50
+251/251 [==============================] - 20s 80ms/step - loss: 0.2896 - accuracy: 0.8810 - val_loss: 0.3588 - val_accuracy: 0.8742
+Epoch 3/50
+251/251 [==============================] - 19s 77ms/step - loss: 0.2422 - accuracy: 0.9032 - val_loss: 0.2192 - val_accuracy: 0.9045
+Epoch 4/50
+251/251 [==============================] - 20s 78ms/step - loss: 0.2030 - accuracy: 0.9189 - val_loss: 0.2535 - val_accuracy: 0.8921
+Epoch 5/50
+251/251 [==============================] - 20s 80ms/step - loss: 0.1844 - accuracy: 0.9276 - val_loss: 0.1829 - val_accuracy: 0.9258
+Epoch 6/50
+251/251 [==============================] - 20s 78ms/step - loss: 0.1598 - accuracy: 0.9381 - val_loss: 0.2737 - val_accuracy: 0.9056
+Epoch 7/50
+251/251 [==============================] - 20s 78ms/step - loss: 0.1529 - accuracy: 0.9381 - val_loss: 0.1821 - val_accuracy: 0.9281
+Epoch 8/50
+251/251 [==============================] - 20s 78ms/step - loss: 0.1339 - accuracy: 0.9494 - val_loss: 0.2081 - val_accuracy: 0.9191
+Epoch 9/50
+251/251 [==============================] - 20s 78ms/step - loss: 0.1156 - accuracy: 0.9567 - val_loss: 0.4343 - val_accuracy: 0.8247
+Epoch 10/50
+251/251 [==============================] - 20s 81ms/step - loss: 0.1014 - accuracy: 0.9593 - val_loss: 0.2912 - val_accuracy: 0.8955
+Epoch 11/50
+251/251 [==============================] - 19s 77ms/step - loss: 0.0864 - accuracy: 0.9663 - val_loss: 0.1664 - val_accuracy: 0.9393
+Epoch 12/50
+251/251 [==============================] - 19s 78ms/step - loss: 0.0783 - accuracy: 0.9713 - val_loss: 0.2661 - val_accuracy: 0.9236
+Epoch 13/50
+251/251 [==============================] - 19s 78ms/step - loss: 0.0629 - accuracy: 0.9769 - val_loss: 0.3778 - val_accuracy: 0.8809
+Epoch 14/50
+251/251 [==============================] - 20s 80ms/step - loss: 0.0563 - accuracy: 0.9783 - val_loss: 0.3499 - val_accuracy: 0.8955
+Epoch 15/50
+251/251 [==============================] - 19s 77ms/step - loss: 0.0427 - accuracy: 0.9851 - val_loss: 0.2849 - val_accuracy: 0.9281
+Epoch 16/50
+251/251 [==============================] - 19s 78ms/step - loss: 0.0382 - accuracy: 0.9863 - val_loss: 0.2719 - val_accuracy: 0.9315
+Epoch 17/50
+251/251 [==============================] - 19s 77ms/step - loss: 0.0417 - accuracy: 0.9831 - val_loss: 0.2723 - val_accuracy: 0.9281
+Epoch 18/50
+251/251 [==============================] - 20s 80ms/step - loss: 0.0272 - accuracy: 0.9911 - val_loss: 0.3004 - val_accuracy: 0.9247
+Epoch 19/50
+251/251 [==============================] - 20s 78ms/step - loss: 0.0380 - accuracy: 0.9858 - val_loss: 0.3081 - val_accuracy: 0.9270
+Epoch 20/50
+251/251 [==============================] - 19s 78ms/step - loss: 0.0243 - accuracy: 0.9911 - val_loss: 0.2282 - val_accuracy: 0.9438
+Epoch 21/50
+251/251 [==============================] - 20s 80ms/step - loss: 0.0232 - accuracy: 0.9924 - val_loss: 0.2701 - val_accuracy: 0.9371
+Epoch 22/50
+251/251 [==============================] - 20s 78ms/step - loss: 0.0250 - accuracy: 0.9918 - val_loss: 0.3651 - val_accuracy: 0.9225
+Epoch 23/50
+251/251 [==============================] - 19s 78ms/step - loss: 0.0399 - accuracy: 0.9849 - val_loss: 0.2829 - val_accuracy: 0.9348
+Epoch 24/50
+251/251 [==============================] - 19s 78ms/step - loss: 0.0091 - accuracy: 0.9964 - val_loss: 0.4296 - val_accuracy: 0.9191
+Epoch 25/50
+251/251 [==============================] - 20s 80ms/step - loss: 0.0224 - accuracy: 0.9909 - val_loss: 0.8183 - val_accuracy: 0.8618
+Epoch 26/50
+251/251 [==============================] - 19s 77ms/step - loss: 0.0234 - accuracy: 0.9918 - val_loss: 0.2553 - val_accuracy: 0.9393
+Epoch 27/50
+251/251 [==============================] - 20s 80ms/step - loss: 0.0148 - accuracy: 0.9949 - val_loss: 0.4005 - val_accuracy: 0.9225
+Epoch 28/50
+251/251 [==============================] - 19s 78ms/step - loss: 0.0171 - accuracy: 0.9933 - val_loss: 0.3431 - val_accuracy: 0.9247
+Epoch 29/50
+251/251 [==============================] - 19s 77ms/step - loss: 0.0264 - accuracy: 0.9905 - val_loss: 0.3082 - val_accuracy: 0.9337
+Epoch 30/50
+251/251 [==============================] - 19s 78ms/step - loss: 0.0128 - accuracy: 0.9956 - val_loss: 0.5629 - val_accuracy: 0.9101
+Epoch 31/50
+251/251 [==============================] - 20s 78ms/step - loss: 0.0208 - accuracy: 0.9928 - val_loss: 0.4898 - val_accuracy: 0.8944
+Epoch 32/50
+251/251 [==============================] - 20s 79ms/step - loss: 0.0156 - accuracy: 0.9939 - val_loss: 0.2728 - val_accuracy: 0.9416
+Epoch 33/50
+251/251 [==============================] - 19s 78ms/step - loss: 0.0055 - accuracy: 0.9980 - val_loss: 0.3598 - val_accuracy: 0.9326
+Epoch 34/50
+251/251 [==============================] - 19s 77ms/step - loss: 0.0235 - accuracy: 0.9916 - val_loss: 0.3436 - val_accuracy: 0.9146
+Epoch 35/50
+251/251 [==============================] - 19s 77ms/step - loss: 0.0197 - accuracy: 0.9929 - val_loss: 0.3367 - val_accuracy: 0.9292
+Epoch 36/50
+251/251 [==============================] - 19s 78ms/step - loss: 0.0073 - accuracy: 0.9976 - val_loss: 0.2850 - val_accuracy: 0.9416
+Epoch 37/50
+251/251 [==============================] - 19s 78ms/step - loss: 9.6379e-04 - accuracy: 1.0000 - val_loss: 0.3812 - val_accuracy: 0.9382
+Epoch 38/50
+251/251 [==============================] - 19s 77ms/step - loss: 1.6388e-04 - accuracy: 1.0000 - val_loss: 0.3781 - val_accuracy: 0.9404
+Epoch 39/50
+251/251 [==============================] - 19s 77ms/step - loss: 4.2951e-05 - accuracy: 1.0000 - val_loss: 0.3778 - val_accuracy: 0.9427
+Epoch 40/50
+251/251 [==============================] - 19s 78ms/step - loss: 3.0450e-05 - accuracy: 1.0000 - val_loss: 0.3836 - val_accuracy: 0.9416
+Epoch 41/50
+251/251 [==============================] - 20s 78ms/step - loss: 3.3730e-05 - accuracy: 1.0000 - val_loss: 0.3853 - val_accuracy: 0.9438
+Epoch 42/50
+251/251 [==============================] - 20s 80ms/step - loss: 5.5371e-05 - accuracy: 1.0000 - val_loss: 0.4094 - val_accuracy: 0.9449
+Epoch 43/50
+251/251 [==============================] - 19s 77ms/step - loss: 1.7028e-05 - accuracy: 1.0000 - val_loss: 0.4140 - val_accuracy: 0.9461
+Epoch 44/50
+251/251 [==============================] - 19s 78ms/step - loss: 2.3628e-05 - accuracy: 1.0000 - val_loss: 0.4284 - val_accuracy: 0.9416
+Epoch 45/50
+251/251 [==============================] - 20s 80ms/step - loss: 2.0085e-05 - accuracy: 1.0000 - val_loss: 0.4814 - val_accuracy: 0.9416
+Epoch 46/50
+251/251 [==============================] - 20s 80ms/step - loss: 1.6367e-05 - accuracy: 1.0000 - val_loss: 0.4334 - val_accuracy: 0.9416
+Epoch 47/50
+251/251 [==============================] - 19s 77ms/step - loss: 1.8196e-05 - accuracy: 1.0000 - val_loss: 0.4508 - val_accuracy: 0.9427
+Epoch 48/50
+251/251 [==============================] - 19s 77ms/step - loss: 5.1362e-05 - accuracy: 1.0000 - val_loss: 0.4426 - val_accuracy: 0.9438
+Epoch 49/50
+251/251 [==============================] - 20s 80ms/step - loss: 0.1143 - accuracy: 0.9624 - val_loss: 0.2343 - val_accuracy: 0.9315
+Epoch 50/50
+251/251 [==============================] - 19s 77ms/step - loss: 0.0217 - accuracy: 0.9925 - val_loss: 0.2618 - val_accuracy: 0.9348
+
+
+100%|██████████| 1890/1890 [00:28<00:00, 66.40it/s]
+Images:  (1890, 128, 128, 3)
+Labels:  (1890, 2)
+Count:  1890
+60/60 [==============================] - 2s 26ms/step
+[0 0 0 ... 0 0 0]
+[0 0 0 ... 0 0 0]
+Accuracy:  0.8042328042328042
+              precision    recall  f1-score   support
+
+           0       0.76      0.96      0.85      1096
+           1       0.92      0.59      0.72       794
+
+    accuracy                           0.80      1890
+   macro avg       0.84      0.77      0.78      1890
+weighted avg       0.83      0.80      0.79      1890
